@@ -1,24 +1,8 @@
 import { useEffect, useState, useMemo } from "react";
-import {
-  MapContainer,
-  TileLayer,
-  Marker,
-  Polyline,
-  Popup,
-} from "react-leaflet";
-import L from "leaflet";
-import "leaflet/dist/leaflet.css";
-import iconUrl from "leaflet/dist/images/marker-icon.png";
-import iconRetinaUrl from "leaflet/dist/images/marker-icon-2x.png";
-import shadowUrl from "leaflet/dist/images/marker-shadow.png";
-
-// Fix default icon paths for Leaflet when using bundlers
-delete (L.Icon.Default.prototype as any)._getIconUrl;
-L.Icon.Default.mergeOptions({
-  iconRetinaUrl,
-  iconUrl,
-  shadowUrl,
-});
+import MapPanel from "../components/MapPanel";
+import ControlsPanel from "../components/ControlsPanel";
+import CheckpointsPanel from "../components/CheckpointsPanel";
+import TelemetryPanel from "../components/TelemetryPanel";
 
 type DashboardProps = {
   user: { email: string; role: string };
@@ -35,117 +19,95 @@ export default function Dashboard({ user, onLogout }: DashboardProps) {
     { label: "New Delhi", lat: 28.6139, lon: 77.209 },
   ];
 
-  // Start defaults to Patiala but is editable via UI
-  const [start, setStart] = useState<{ lat: number; lon: number }>({
+  // State: start/destination, route, inputs
+  const [start, setStart] = useState<{ lat: number; lon: number }>(() => ({
     lat: PRESETS[0].lat,
     lon: PRESETS[0].lon,
-  });
+  }));
 
-  // Destination: try localStorage.key 'objectPos' else default to Chandigarh
-  const [dest, setDest] = useState<{ lat: number; lon: number } | null>(null);
-  useEffect(() => {
+  const [dest, setDest] = useState<{ lat: number; lon: number } | null>(() => {
     try {
       const raw = localStorage.getItem("objectPos");
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (
-          parsed &&
-          typeof parsed.lat === "number" &&
-          typeof parsed.lon === "number"
-        ) {
-          setDest({ lat: parsed.lat, lon: parsed.lon });
-          return;
-        }
-      }
-    } catch (e) {
-      // ignore
-    }
-    // default destination: Chandigarh
-    setDest({ lat: PRESETS[1].lat, lon: PRESETS[1].lon });
-  }, []);
+      if (raw) return JSON.parse(raw);
+    } catch (e) {}
+    return { lat: PRESETS[1].lat, lon: PRESETS[1].lon };
+  });
 
-  // Route coordinates from OSRM
   const [routeCoords, setRouteCoords] = useState<[number, number][]>([]);
+
+  const [customStartLat, setCustomStartLat] = useState("");
+  const [customStartLon, setCustomStartLon] = useState("");
+  const [customDestLat, setCustomDestLat] = useState("");
+  const [customDestLon, setCustomDestLon] = useState("");
+
+  // Fetch route from OSRM when start or dest changes
   useEffect(() => {
     if (!dest) return;
-
-    const s = `${start.lon},${start.lat}`;
-    const d = `${dest.lon},${dest.lat}`;
-    const url = `https://router.project-osrm.org/route/v1/driving/${s};${d}?overview=full&geometries=geojson`;
-
+    const url = `https://router.project-osrm.org/route/v1/driving/${start.lon},${start.lat};${dest.lon},${dest.lat}?overview=full&geometries=geojson`;
+    let cancelled = false;
     fetch(url)
       .then((r) => r.json())
       .then((data) => {
-        if (
-          data &&
-          data.routes &&
-          data.routes[0] &&
-          data.routes[0].geometry &&
-          data.routes[0].geometry.coordinates
-        ) {
-          // OSRM returns [lon, lat] pairs; Leaflet expects [lat, lon]
-          const coords = data.routes[0].geometry.coordinates.map(
-            (c: number[]) => [c[1], c[0]]
-          );
-          setRouteCoords(coords);
+        if (cancelled) return;
+        const coords: [number, number][] = [];
+        try {
+          const raw = data.routes?.[0]?.geometry?.coordinates || [];
+          for (const c of raw) {
+            // OSRM gives [lon, lat]
+            coords.push([c[1], c[0]]);
+          }
+        } catch (e) {
+          // ignore
         }
+        setRouteCoords(coords);
       })
-      .catch(() => {
-        setRouteCoords([]);
-      });
-  }, [dest, start]);
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [start, dest]);
 
-  // Compute sampled checkpoints from the route (up to 6 points)
+  // Checkpoints sampled from route
   const checkpoints = useMemo(() => {
-    if (!routeCoords || routeCoords.length === 0)
+    if (routeCoords.length === 0)
       return [] as { lat: number; lon: number; arrived?: boolean }[];
     const max = 6;
     const step = Math.max(1, Math.floor(routeCoords.length / max));
-    const points: { lat: number; lon: number; arrived?: boolean }[] = [];
+    const list: { lat: number; lon: number; arrived?: boolean }[] = [];
     for (let i = 0; i < routeCoords.length; i += step) {
-      const p = routeCoords[i];
-      points.push({ lat: p[0], lon: p[1], arrived: false });
-      if (points.length >= max) break;
+      const [lat, lon] = routeCoords[i];
+      list.push({ lat, lon, arrived: false });
+      if (list.length >= max) break;
     }
-    return points;
+    return list;
   }, [routeCoords]);
 
-  // Simple simulated telemetry (derived from destination to be deterministic)
-  const [telemetry, setTelemetry] = useState({
-    temp: "—",
-    humidity: "—",
-    battery: "—",
-    signal: "—",
-  });
-  useEffect(() => {
-    if (!dest) return;
-    const tBase = Math.abs(dest.lat) % 10;
-    const hBase = Math.abs(dest.lon) % 30;
-    const temp = (20 + tBase).toFixed(1);
-    const humidity = Math.round(40 + (hBase % 50)).toString();
-    const battery = (80 - Math.round(tBase)).toString();
-    const signal = (-60 - Math.round(hBase % 20)).toString();
-    setTelemetry({ temp, humidity, battery, signal });
-  }, [dest, routeCoords]);
+  // Simple telemetry simulation based on destination
+  const telemetry = useMemo(() => {
+    const base = dest ? Math.abs(Math.round(dest.lat % 30)) : 20;
+    return {
+      temp: base + 10,
+      humidity: 40 + (dest ? Math.round(Math.abs(dest.lon) % 50) : 10),
+      battery: 80,
+      signal: -60,
+    };
+  }, [dest]);
 
-  // Custom coordinate inputs and helpers
-  const [customStartLat, setCustomStartLat] = useState<string>("");
-  const [customStartLon, setCustomStartLon] = useState<string>("");
-  const [customDestLat, setCustomDestLat] = useState<string>("");
-  const [customDestLon, setCustomDestLon] = useState<string>("");
-
+  // Handlers
   function applyPresetToStart(idx: number) {
     const p = PRESETS[idx];
-    setStart({ lat: p.lat, lon: p.lon });
+    if (p) setStart({ lat: p.lat, lon: p.lon });
   }
 
   function applyPresetToDest(idx: number) {
     const p = PRESETS[idx];
-    setDest({ lat: p.lat, lon: p.lon });
-    localStorage.setItem(
-      "objectPos",
-      JSON.stringify({ lat: p.lat, lon: p.lon })
-    );
+    if (p) {
+      setDest({ lat: p.lat, lon: p.lon });
+      localStorage.setItem(
+        "objectPos",
+        JSON.stringify({ lat: p.lat, lon: p.lon })
+      );
+    }
   }
 
   function applyCustomStart() {
@@ -227,207 +189,33 @@ export default function Dashboard({ user, onLogout }: DashboardProps) {
           <div className="h-full grid grid-cols-1 md:grid-cols-4 md:grid-rows-2 gap-4">
             {/* Map column (top-left) */}
             <div className="md:col-span-1 md:row-span-1 h-full">
-              {dest ? (
-                <MapContainer
-                  center={[start.lat, start.lon]}
-                  zoom={10}
-                  className="w-full h-full"
-                >
-                  <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-                  <Marker position={[start.lat, start.lon]}>
-                    <Popup>Start: Patiala</Popup>
-                  </Marker>
-                  <Marker position={[dest.lat, dest.lon]}>
-                    <Popup>Destination</Popup>
-                  </Marker>
-                  {routeCoords.length > 0 && (
-                    <Polyline
-                      positions={routeCoords}
-                      color="#2563eb"
-                      weight={4}
-                    />
-                  )}
-                </MapContainer>
-              ) : (
-                <div className="w-full h-full flex items-center justify-center text-slate-500">
-                  Loading map…
-                </div>
-              )}
+              <MapPanel start={start} dest={dest} routeCoords={routeCoords} />
             </div>
 
             {/* Checkpoints column (top-middle) */}
-            <div className="md:col-span-1 md:row-span-1 p-4">
-              <div className="p-4 bg-white rounded-lg border border-slate-100 h-full">
-                <h4 className="text-sm font-medium text-slate-700">
-                  Checkpoints
-                </h4>
-                <p className="text-xs text-slate-400 mt-1">
-                  Points sampled along the route.
-                </p>
-                <ul className="mt-3 space-y-2 text-sm text-slate-600 max-h-56 overflow-auto">
-                  {checkpoints.length === 0 && (
-                    <li className="text-slate-400">No checkpoints available</li>
-                  )}
-                  {checkpoints.map((cp, idx) => (
-                    <li key={idx} className="flex items-center justify-between">
-                      <div>
-                        <div className="font-mono text-xs">
-                          {cp.lat.toFixed(6)}, {cp.lon.toFixed(6)}
-                        </div>
-                        <div className="text-xs text-slate-400">
-                          Checkpoint {idx + 1}
-                        </div>
-                      </div>
-                      <div className="text-xs text-slate-500">
-                        {cp.arrived ? "Reached" : "Pending"}
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </div>
+            <CheckpointsPanel checkpoints={checkpoints} />
 
             {/* Controls column (top-right, spans 2 cols) */}
-            <div className="md:col-span-2 md:row-span-1">
-              <div className="bg-white p-4 rounded-lg border border-slate-100 h-full">
-                <div className="mb-4 space-y-3">
-                  <div>
-                    <label className="block text-xs font-medium text-slate-600">
-                      Source (preset)
-                    </label>
-                    <select
-                      onChange={(e) =>
-                        applyPresetToStart(Number(e.target.value))
-                      }
-                      className="mt-1 w-full px-3 py-2 rounded-lg border border-slate-200 bg-white"
-                    >
-                      {PRESETS.map((p, i) => (
-                        <option key={p.label} value={i}>
-                          {p.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-medium text-slate-600">
-                      Custom Source (lat, lon)
-                    </label>
-                    <div className="mt-1 flex gap-2">
-                      <input
-                        value={customStartLat}
-                        onChange={(e) => setCustomStartLat(e.target.value)}
-                        placeholder="lat"
-                        className="w-1/2 px-2 py-2 rounded-lg border border-slate-200"
-                      />
-                      <input
-                        value={customStartLon}
-                        onChange={(e) => setCustomStartLon(e.target.value)}
-                        placeholder="lon"
-                        className="w-1/2 px-2 py-2 rounded-lg border border-slate-200"
-                      />
-                      <button
-                        onClick={applyCustomStart}
-                        className="px-3 py-2 bg-sky-600 text-white rounded-lg"
-                      >
-                        Apply
-                      </button>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-medium text-slate-600">
-                      Destination (preset)
-                    </label>
-                    <select
-                      onChange={(e) =>
-                        applyPresetToDest(Number(e.target.value))
-                      }
-                      className="mt-1 w-full px-3 py-2 rounded-lg border border-slate-200 bg-white"
-                    >
-                      {PRESETS.map((p, i) => (
-                        <option key={p.label} value={i}>
-                          {p.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-medium text-slate-600">
-                      Custom Destination (lat, lon)
-                    </label>
-                    <div className="mt-1 flex gap-2">
-                      <input
-                        value={customDestLat}
-                        onChange={(e) => setCustomDestLat(e.target.value)}
-                        placeholder="lat"
-                        className="w-1/2 px-2 py-2 rounded-lg border border-slate-200"
-                      />
-                      <input
-                        value={customDestLon}
-                        onChange={(e) => setCustomDestLon(e.target.value)}
-                        placeholder="lon"
-                        className="w-1/2 px-2 py-2 rounded-lg border border-slate-200"
-                      />
-                      <button
-                        onClick={applyCustomDest}
-                        className="px-3 py-2 bg-sky-600 text-white rounded-lg"
-                      >
-                        Set
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                <div>
-                  <h3 className="text-sm font-medium text-slate-700">
-                    Object Position
-                  </h3>
-                  <p className="mt-2 text-sm text-slate-600">
-                    Start:{" "}
-                    <span className="font-mono">
-                      {start.lat.toFixed(6)}, {start.lon.toFixed(6)}
-                    </span>
-                  </p>
-                  {dest && (
-                    <p className="mt-1 text-sm text-slate-600">
-                      Destination:{" "}
-                      <span className="font-mono">
-                        {dest.lat.toFixed(6)}, {dest.lon.toFixed(6)}
-                      </span>
-                    </p>
-                  )}
-                </div>
-              </div>
-            </div>
+            <ControlsPanel
+              PRESETS={PRESETS}
+              customStartLat={customStartLat}
+              customStartLon={customStartLon}
+              customDestLat={customDestLat}
+              customDestLon={customDestLon}
+              setCustomStartLat={setCustomStartLat}
+              setCustomStartLon={setCustomStartLon}
+              setCustomDestLat={setCustomDestLat}
+              setCustomDestLon={setCustomDestLon}
+              applyPresetToStart={applyPresetToStart}
+              applyPresetToDest={applyPresetToDest}
+              applyCustomStart={applyCustomStart}
+              applyCustomDest={applyCustomDest}
+              start={start}
+              dest={dest}
+            />
 
             {/* Telemetry row (full width, bottom) */}
-            <div className="md:col-span-4 md:row-span-1">
-              <div className="p-4 bg-white rounded-lg border border-slate-100">
-                <h4 className="text-sm font-medium text-slate-700">
-                  Telemetry
-                </h4>
-                <div className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm text-slate-600">
-                  <div className="p-2 bg-slate-50 rounded border border-slate-100">
-                    <div className="text-xs text-slate-400">Temperature</div>
-                    <div className="font-medium">{telemetry.temp} °C</div>
-                  </div>
-                  <div className="p-2 bg-slate-50 rounded border border-slate-100">
-                    <div className="text-xs text-slate-400">Humidity</div>
-                    <div className="font-medium">{telemetry.humidity} %</div>
-                  </div>
-                  <div className="p-2 bg-slate-50 rounded border border-slate-100">
-                    <div className="text-xs text-slate-400">Battery</div>
-                    <div className="font-medium">{telemetry.battery} %</div>
-                  </div>
-                  <div className="p-2 bg-slate-50 rounded border border-slate-100">
-                    <div className="text-xs text-slate-400">Signal</div>
-                    <div className="font-medium">{telemetry.signal} dBm</div>
-                  </div>
-                </div>
-              </div>
-            </div>
+            <TelemetryPanel telemetry={telemetry} />
           </div>
         </section>
       </main>
