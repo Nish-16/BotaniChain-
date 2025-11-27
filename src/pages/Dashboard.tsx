@@ -1,9 +1,13 @@
 // --- File: src/pages/Dashboard.tsx ---
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Sidebar from "../components/Sidebar";
 // Import RouteKey, RouteInfo type, and PRESET_ROUTES for local use (from your MapPanel)
-import MapPanel, { RouteKey, RouteInfo, PRESET_ROUTES } from "../components/MapPanel";
+import MapPanel, {
+  RouteKey,
+  RouteInfo,
+  PRESET_ROUTES,
+} from "../components/MapPanel";
 import Checkpoints from "../components/Checkpoints";
 import { ROUTE_CHECKPOINTS } from "../data/routeCheckpoints";
 import { Clock, Ruler, Info, AlertTriangle, Loader } from "lucide-react";
@@ -31,7 +35,11 @@ type RouteDetailsProps = {
   routeStatus: "idle" | "loading" | "success" | "error";
 };
 
-function RouteDetailsPanel({ activeRouteKey, routeInfo, routeStatus }: RouteDetailsProps) {
+function RouteDetailsPanel({
+  activeRouteKey,
+  routeInfo,
+  routeStatus,
+}: RouteDetailsProps) {
   const isInteractive = activeRouteKey === "Interactive";
   const currentRoute = PRESET_ROUTES?.[activeRouteKey] ?? null;
 
@@ -129,24 +137,84 @@ function RouteDetailsPanel({ activeRouteKey, routeInfo, routeStatus }: RouteDeta
   );
 }
 
+// --- Truck Telemetry Info Panel ---
+function InfoPanel() {
+  const [temp, setTemp] = useState<number>(28.4);
+  const [humidity, setHumidity] = useState<number>(62);
+  const [battery, setBattery] = useState<number>(87);
+  const [updatedAt, setUpdatedAt] = useState<number>(Date.now());
+
+  useEffect(() => {
+    // Simulate telemetry updates every 5 seconds
+    const t = setInterval(() => {
+      setTemp((v) => Math.max(10, +(v + (Math.random() * 2 - 1)).toFixed(1)));
+      setHumidity((h) =>
+        Math.min(100, Math.max(0, Math.round(h + Math.random() * 3 - 1)))
+      );
+      setBattery((b) =>
+        Math.max(0, Math.min(100, Math.round(b - Math.random() * 0.5)))
+      );
+      setUpdatedAt(Date.now());
+    }, 5000);
+    return () => clearInterval(t);
+  }, []);
+
+  return (
+    <section className="bg-white rounded-2xl shadow p-4 border border-slate-200">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-semibold">Truck Telemetry</h3>
+        <span className="text-xs text-gray-400">Live</span>
+      </div>
+
+      <div className="grid grid-cols-3 gap-3 text-center">
+        <div>
+          <div className="text-xs text-gray-500">Temp</div>
+          <div className="text-lg font-bold">{temp.toFixed(1)}°C</div>
+        </div>
+        <div>
+          <div className="text-xs text-gray-500">Humidity</div>
+          <div className="text-lg font-bold">{humidity}%</div>
+        </div>
+        <div>
+          <div className="text-xs text-gray-500">Battery</div>
+          <div className="text-lg font-bold">{battery}%</div>
+        </div>
+      </div>
+
+      <div className="mt-3 text-xs text-gray-400">
+        Updated: {new Date(updatedAt).toLocaleTimeString()}
+      </div>
+    </section>
+  );
+}
+
 // --- Main Dashboard Component ---
 export default function Dashboard({ user, onLogout }: DashboardProps) {
   // Lift state: Dashboard now controls the active route key
   const INITIAL_ROUTE_KEY: RouteKey = "Patiala_Chandigarh";
-  const [activeRouteKey, setActiveRouteKey] = useState<RouteKey>(INITIAL_ROUTE_KEY);
+  const [activeRouteKey, setActiveRouteKey] =
+    useState<RouteKey>(INITIAL_ROUTE_KEY);
 
   // State to hold route information and status from MapPanel
   const [routeInfo, setRouteInfo] = useState<RouteInfo | null>(null);
-  const [routeStatus, setRouteStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
+  const [routeStatus, setRouteStatus] = useState<
+    "idle" | "loading" | "success" | "error"
+  >("idle");
+
+  // Telemetry state will be managed in InfoPanel below
 
   // Prepare data for the sidebar (guarded: fallback to empty array)
-  const currentCheckpoints = ROUTE_CHECKPOINTS?.[activeRouteKey] ?? [];
+  const currentCheckpoints = ((ROUTE_CHECKPOINTS as Record<string, any>)[
+    activeRouteKey as string
+  ] ?? []) as any[];
 
   // Handler for checkpoint selection in the sidebar (no map interaction here)
   const handleSidebarSelect = (lat: number, lon: number) => {
     // you may later forward this to the MapPanel if you add a callback prop
     console.log(`Checkpoint selected from sidebar: ${lat}, ${lon}`);
   };
+
+  // no-op navigation here; Sidebar uses router Links now
 
   return (
     <div className="min-h-screen flex bg-emerald-50">
@@ -172,18 +240,25 @@ export default function Dashboard({ user, onLogout }: DashboardProps) {
 
           {/* Checkpoints column (fixed width) */}
           <aside className="w-full lg:w-80">
-            <div className="sticky top-8">
-              {/* 1. Checkpoints List */}
+            <div className="sticky top-8 space-y-4">
+              {/* 1. Info Panel (truck telemetry) */}
+              <InfoPanel />
+
+              {/* 2. Checkpoints List */}
               <Checkpoints
-                checkpoints={currentCheckpoints.map((p) => ({
+                checkpoints={currentCheckpoints.map((p: any) => ({
                   ...p,
                   reached: p.reached,
                 }))}
                 onSelect={handleSidebarSelect}
               />
 
-              {/* 2. Router Details Panel (NEW LOCATION) */}
-              <RouteDetailsPanel activeRouteKey={activeRouteKey} routeInfo={routeInfo} routeStatus={routeStatus} />
+              {/* 3. Router Details Panel */}
+              <RouteDetailsPanel
+                activeRouteKey={activeRouteKey}
+                routeInfo={routeInfo}
+                routeStatus={routeStatus}
+              />
             </div>
           </aside>
         </div>

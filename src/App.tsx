@@ -1,6 +1,9 @@
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
+import WarehouseQR from "./pages/WarehouseQR";
+import Settings from "./pages/Settings";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
 
 type AuthUser = { email: string; role: string };
 
@@ -28,9 +31,24 @@ export default function App() {
     setUser(null);
   }
 
-  return user ? (
-    <Dashboard user={user} onLogout={handleLogout} />
-  ) : (
-    <Login onLogin={handleLogin} />
+  if (!user) return <Login onLogin={handleLogin} />;
+
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route
+          path="/"
+          element={<Dashboard user={user} onLogout={handleLogout} />}
+        />
+        <Route
+          path="/warehouse"
+          element={<WarehouseQR user={user} onLogout={handleLogout} />}
+        />
+        <Route
+          path="/settings"
+          element={<Settings user={user} onLogout={handleLogout} />}
+        />
+      </Routes>
+    </BrowserRouter>
   );
 }

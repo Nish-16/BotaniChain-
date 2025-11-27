@@ -1,7 +1,8 @@
 // --- File: src/components/Sidebar.tsx ---
 
-import { LogOut, LayoutDashboard, Map, Truck, Settings } from "lucide-react";
+import { LogOut, LayoutDashboard, Settings, QrCode } from "lucide-react";
 import type { ComponentType } from "react";
+import { Link } from "react-router-dom";
 
 type Props = {
   user: { email: string; role: string };
@@ -38,7 +39,7 @@ function NavItem({ icon: Icon, label, isActive = false }: NavItemProps) {
 // --- Main Sidebar Component ---
 export default function Sidebar({ user, onLogout }: Props) {
   return (
-    <aside className="w-64 bg-white text-slate-900 border-r border-slate-200 p-5 flex flex-col justify-between shadow-lg">
+    <aside className="w-64 min-h-screen bg-white text-slate-900 border-r border-slate-200 p-5 flex flex-col justify-between shadow-lg">
       {/* Top Section: Logo and Navigation */}
       <div>
         <div className="mb-8 p-1">
@@ -48,10 +49,24 @@ export default function Sidebar({ user, onLogout }: Props) {
         </div>
 
         <nav className="space-y-2" aria-label="Main navigation">
-          <NavItem icon={LayoutDashboard} label="Overview" isActive={true} />
-          <NavItem icon={Map} label="Map" />
-          <NavItem icon={Truck} label="Assets" />
-          <NavItem icon={Settings} label="Settings" />
+          <Link to="/" className="w-full block">
+            <NavItem
+              icon={LayoutDashboard}
+              label="Overview"
+            />
+          </Link>
+          <Link to="/warehouse" className="w-full block">
+            <NavItem
+              icon={QrCode as ComponentType<{ size?: number }>}
+              label="Warehouse QR"
+            />
+          </Link>
+          <Link to="/settings" className="w-full block">
+            <NavItem
+              icon={Settings}
+              label="Settings"
+            />
+          </Link>
         </nav>
       </div>
 
